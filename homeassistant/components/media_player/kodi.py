@@ -12,6 +12,8 @@ import aiohttp
 import voluptuous as vol
 
 import re
+import os
+from whoosh import fields, index, qparser
 
 from homeassistant.components.media_player import (
     SUPPORT_NEXT_TRACK, SUPPORT_PAUSE, SUPPORT_PREVIOUS_TRACK, SUPPORT_SEEK,
@@ -113,7 +115,15 @@ class KodiDevice(MediaPlayerDevice):
         self._properties = None
         self._item = None
         self._app_properties = None
-
+        
+        dir_index = '/home/oslo/.homeassistant/kodi_index/'
+        if not os.path.isdir(dir_index):
+            os.makedirs(dir_index)
+        if index.exists_in(dir_index):
+            self._index = index.open_dir(dir_index)
+        else:
+            schema = fields.Schema(name=fields.TEXT, id=fields.NUMERIC(unique=True))
+            self._index = index.create_in(dir_index, schema)
 
     @property
     def name(self):
@@ -433,6 +443,14 @@ class KodiDevice(MediaPlayerDevice):
         songs = yield from self.async_get_songs()
         out = self._find(song_name, [a['label'] for a in songs['songs']])
         return songs['songs'][out[0][0]]['songid']
+    
+    @asyncio.coroutine
+    def async_update_index(self):
+        songs = yield from self.async_get_songs()
+        wr = self._index.writer()
+        for s in songs['songs']:
+            wr.update_document(name=s['label'], id=int(s['songid']))
+        wr.commit()
                 
     def _find(self, key_word, words):
         key_word = key_word.split(' ')
@@ -449,6 +467,17 @@ class KodiDevice(MediaPlayerDevice):
 if __name__ == '__main__':
     kodi = KodiDevice(HomeAssistant(), '', '192.168.0.33', '8080')
     
-    asyncio.get_event_loop().run_until_complete(kodi.async_play_song('firth fifth'))
+    #songs = asyncio.get_event_loop().run_until_complete(kodi.async_get_songs())
+    #print(songs['songs'])
+    asyncio.get_event_loop().run_until_complete(kodi.async_update_index())
+    
+    qp = qparser.QueryParser("name", schema=kodi._index.schema)
+    q = qp.parse(u"donna amico")
+    
+    with kodi._index.searcher() as s:
+        results = s.search(q)
+        
+        print(results[0:1])
+        
     
     
